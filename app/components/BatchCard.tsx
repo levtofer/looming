@@ -26,16 +26,28 @@ export default function BatchCard({
   const [copied, setCopied] = useState(false);
   const [zipping, setZipping] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [timeLeft, setTimeLeftState] = useState({
-    label: "loading...",
+  // Replace your old hook line with this initialization pairing element:
+  const [timeLeftStr, setTimeLeftStr] = useState({
+    label: "Calculating...",
     urgency: 0,
   });
 
   useEffect(() => {
-    setTimeLeftState(getTimeLeft(batch.expires_at));
+    const targetTime = new Date(batch.expires_at).getTime();
+
+    const updateTimer = () => {
+      const now = Date.now();
+      const difference = targetTime - now;
+      setTimeLeftStr(formatRemainingTime(difference)); // Setting object payload!
+    };
+
+    updateTimer();
+    const intervalId = setInterval(updateTimer, 1000);
+
+    return () => clearInterval(intervalId);
   }, [batch.expires_at]);
 
-  const { label, urgency } = timeLeft;
+  const { label, urgency } = timeLeftStr;
   const threadOpacity = 1 - urgency * 0.75;
 
   const shareUrl =
@@ -226,4 +238,50 @@ function FileTile({ file }: { file: Batch["files"][number] }) {
       </button>
     </div>
   );
+}
+
+function formatRemainingTime(ms: number): { label: string; urgency: number } {
+  if (ms <= 0) return { label: "Expired ⏳", urgency: 1 };
+
+  const totalSeconds = Math.floor(ms / 1000);
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const totalHours = Math.floor(totalMinutes / 60);
+  const totalDays = Math.floor(totalHours / 24);
+
+  // Calculate opacity urgency context factor based on a standard 24-hour cycle fallback window
+  const maxWindow = 24 * 60 * 60 * 1000;
+  const urgency = Math.min(1, Math.max(0, 1 - ms / maxWindow));
+
+  // 1. 🚨 Below 5 minutes: minutes + seconds
+  if (totalMinutes < 5) {
+    const s = totalSeconds % 60;
+    return {
+      label: `${totalMinutes}m ${s.toString().padStart(2, "0")}s`,
+      urgency,
+    };
+  }
+
+  // 2. 🕒 Below an hour: just minutes
+  if (totalHours < 1) {
+    return {
+      label: `${totalMinutes}m left`,
+      urgency,
+    };
+  }
+
+  // 3. 🗓️ Below 24 hours: hours + minutes
+  if (totalDays < 1) {
+    const m = totalMinutes % 60;
+    return {
+      label: `${totalHours}h ${m.toString().padStart(2, "0")}m`,
+      urgency,
+    };
+  }
+
+  // 4. 💎 Extended Long-Term Pass: days + hours (keeps urgency low so it stays fully visible! =3)
+  const h = totalHours % 24;
+  return {
+    label: `${totalDays}d ${h}h left`,
+    urgency: 0, // Keep thread crisp and solid for admin passes!
+  };
 }
