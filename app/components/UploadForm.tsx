@@ -1,5 +1,6 @@
 "use client";
 
+import { getFileGlyph, formatBytes } from '@/lib/fileDisplay'
 import { useState, useRef, useCallback } from "react";
 import {
   uploadBatch,
@@ -109,7 +110,7 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
         </div>
       ) : (
         /* Show the list layout instead when files count > 0! */
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 w-full">
           <div className="flex items-center justify-between border-b border-[#2A2C35] pb-2 mb-2">
             <h3 className="text-xs font-mono uppercase text-[#8A8D98]">
               Staged Files ({stagedFiles.length})
@@ -122,22 +123,63 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
             </button>
           </div>
 
-          {stagedFiles.map((file, i) => (
-            <div
-              key={i}
-              className="flex items-center justify-between gap-3 px-3 py-2 rounded-md bg-[#1B1C22] border border-[#2A2C35]"
-            >
-              <span className="text-sm text-[#EDEAE3] truncate">
-                {file.name}
-              </span>
-              <button
-                onClick={() => removeFile(i)}
-                className="text-xs font-mono text-[#8A8D98] hover:text-[#FF9F4A] transition-colors"
-              >
-                remove
-              </button>
-            </div>
-          ))}
+          {/* 💻 THE PREVIEW MATRIX: Columns stack/stretch on mobile, grids up on desktop! uwu~ */}
+          <div className="flex flex-col gap-4 sm:grid sm:grid-cols-2 md:grid-cols-3 justify-start items-stretch">
+            {stagedFiles.map((file, i) => {
+              // 🔮 Detect type and build a temporary url for image tags
+              const isImg = file.type.startsWith("image/");
+              const localUrl = isImg ? URL.createObjectURL(file) : "";
+
+              return (
+                <div
+                  key={i}
+                  className="w-full sm:w-auto flex flex-col gap-2 p-3 rounded-md bg-[#14151A] border border-[#2A2C35] justify-between transition-transform duration-200"
+                >
+                  <div>
+                    {/* 📷 Square image preview frame box */}
+                    <div className="aspect-square w-full rounded-md bg-[#1B1C22] flex items-center justify-center overflow-hidden mb-2 select-none">
+                      {isImg ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={localUrl}
+                          alt={file.name}
+                          className="w-full h-full object-cover"
+                          onLoad={() => isImg && URL.revokeObjectURL(localUrl)} // Clean memory cache up after load! =3
+                        />
+                      ) : (
+                        <span className="text-3xl text-[#6C7BFF]">
+                          {/* Fallback to your file system icon type helpers */}
+                          {getFileGlyph?.(file.type, file.name) || "📄"}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Title Metadata info lines */}
+                    <div className="min-w-0 px-0.5">
+                      <p
+                        className="text-xs text-[#EDEAE3] font-medium break-all line-clamp-1"
+                        title={file.name}
+                      >
+                        {file.name}
+                      </p>
+                      <p className="text-[10px] font-mono text-[#8A8D98] mt-0.5">
+                        {formatBytes?.(file.size) ||
+                          `${(file.size / 1024).toFixed(1)} KB`}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Remove action deck trigger line */}
+                  <button
+                    onClick={() => removeFile(i)}
+                    className="w-full text-xs font-mono text-center py-2 rounded-md bg-[#23242C] text-[#FF9F4A] border border-[#FF9F4A]/10 active:bg-[#2A2C35] transition-colors mt-1"
+                  >
+                    remove
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
       {/* Settings Panel & Submit Actions (Only accessible when there are files!) */}
