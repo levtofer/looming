@@ -24,3 +24,19 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ⚡ Custom tight terminal alarm micro-pulse at the bottom of globals.css! */
+@keyframes mini-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0;
+  }
+  80%, 100% {
+    transform: scale(1.06); /* Tight, compact bounds so it doesn't break text wrapping! */
+    opacity: 1;
+  }
+}
+
+.animate-mini-ping {
+  animation: mini-ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
