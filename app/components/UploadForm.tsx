@@ -1,7 +1,15 @@
 "use client";
 
-import { getFileGlyph, formatBytes } from '@/lib/fileDisplay'
-import { useState, useRef, useCallback } from "react";
+import { getFileGlyph, formatBytes } from "@/lib/fileDisplay";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import {
+  FolderPlus,
+  Plus,
+  AlertTriangle,
+  Loader2,
+  Upload,
+  FileText,
+} from "lucide-react";
 import {
   uploadBatch,
   getOversizedFiles,
@@ -12,8 +20,28 @@ interface UploadFormProps {
   onUploadComplete: (slug: string) => void;
 }
 
+interface StagedFile {
+  id: string;
+  file: File;
+}
+
+const MIN_SLUG_LENGTH = 5;
+
+function makeId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+// Reusable Win95 "pressed in" panel border
+const inset =
+  "border-2 border-t-[#808080] border-l-[#808080] border-r-[#ffffff] border-b-[#ffffff]";
+// Reusable Win95 "raised" button border
+const raised =
+  "border-2 border-t-[#ffffff] border-l-[#ffffff] border-r-[#808080] border-b-[#808080] active:border-t-[#808080] active:border-l-[#808080] active:border-r-[#ffffff] active:border-b-[#ffffff]";
+
 export default function UploadForm({ onUploadComplete }: UploadFormProps) {
-  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const [expiryDays, setExpiryDays] = useState(1);
   const [customSlug, setCustomSlug] = useState("");
   const [isDragging, setIsDragging] = useState(false);
@@ -21,14 +49,67 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
   const [error, setError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const snackbarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const addFiles = useCallback((newFiles: FileList | File[]) => {
-    setStagedFiles((prev) => [...prev, ...Array.from(newFiles)]);
+    const wrapped = Array.from(newFiles).map((file) => ({
+      id: makeId(),
+      file,
+    }));
+    setStagedFiles((prev) => [...prev, ...wrapped]);
     setError(null);
   }, []);
 
-  function removeFile(index: number) {
-    setStagedFiles((prev) => prev.filter((_, i) => i !== index));
+  const removeFile = useCallback((id: string) => {
+    setStagedFiles((prev) => prev.filter((sf) => sf.id !== id));
+  }, []);
+
+  const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const currentIds = new Set(stagedFiles.map((sf) => sf.id));
+
+    setImageUrls((prev) => {
+      const next = { ...prev };
+      let changed = false;
+
+      for (const sf of stagedFiles) {
+        if (!next[sf.id] && sf.file.type.startsWith("image/")) {
+          next[sf.id] = URL.createObjectURL(sf.file);
+          changed = true;
+        }
+      }
+
+      for (const id of Object.keys(next)) {
+        if (!currentIds.has(id)) {
+          URL.revokeObjectURL(next[id]);
+          delete next[id];
+          changed = true;
+        }
+      }
+
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stagedFiles]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(imageUrls).forEach((url) => URL.revokeObjectURL(url));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (snackbarTimerRef.current) clearTimeout(snackbarTimerRef.current);
+    };
+  }, []);
+
+  function showSnackbar(message: string) {
+    setSnackbar(message);
+    if (snackbarTimerRef.current) clearTimeout(snackbarTimerRef.current);
+    snackbarTimerRef.current = setTimeout(() => setSnackbar(null), 4000);
   }
 
   function handleDrop(e: React.DragEvent) {
@@ -36,6 +117,29 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
     setIsDragging(false);
     if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
   }
+
+  function openFilePicker() {
+    fileInputRef.current?.click();
+  }
+
+  function handleDropzoneKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openFilePicker();
+    }
+  }
+
+  const slugError = useMemo(() => {
+    const trimmed = customSlug.trim();
+    if (trimmed.length === 0) return null;
+    if (trimmed.length < MIN_SLUG_LENGTH) {
+      return `slug needs at least ${MIN_SLUG_LENGTH} letters`;
+    }
+    if (!/^[a-zA-Z0-9-]+$/.test(trimmed)) {
+      return "slug can only use letters, numbers, and dashes";
+    }
+    return null;
+  }, [customSlug]);
 
   async function handleSubmit() {
     setError(null);
@@ -45,23 +149,29 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
       return;
     }
 
-    const oversized = getOversizedFiles(stagedFiles);
+    if (slugError) {
+      setError(slugError);
+      return;
+    }
+
+    const rawFiles = stagedFiles.map((sf) => sf.file);
+
+    const oversized = getOversizedFiles(rawFiles);
     if (oversized.length > 0) {
       setError(`Too big (50MB max): ${oversized.join(", ")}`);
       return;
     }
 
-    if (exceedsSoftWarning(stagedFiles)) {
-      setSnackbar(
+    if (exceedsSoftWarning(rawFiles)) {
+      showSnackbar(
         "Heads up — this batch is over 200MB total. Uploading anyway…",
       );
-      setTimeout(() => setSnackbar(null), 4000);
     }
 
     setIsUploading(true);
     try {
       const result = await uploadBatch(
-        stagedFiles,
+        rawFiles,
         expiryDays,
         customSlug.trim() || null,
       );
@@ -78,8 +188,7 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
   }
 
   return (
-    <div className="relative">
-      {/* Hidden file input used by both layouts */}
+    <div className="relative font-mono text-xs text-black">
       <input
         ref={fileInputRef}
         type="file"
@@ -87,92 +196,91 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
         className="hidden"
         onChange={(e) => e.target.files && addFiles(e.target.files)}
       />
-      {/* 🔄 THE TOGGLE MAGIC SWITCH: Show dropzone ONLY if 0 files are staged! uwu~ */}
+
       {stagedFiles.length === 0 ? (
         <div
+          role="button"
+          tabIndex={0}
+          aria-label="Drop files here, or press enter to browse"
           onDragOver={(e) => {
             e.preventDefault();
             setIsDragging(true);
           }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className="cursor-pointer rounded-lg border-2 border-dashed p-10 text-center transition-colors"
+          onClick={openFilePicker}
+          onKeyDown={handleDropzoneKeyDown}
+          className={`cursor-pointer ${inset} p-8 text-center select-none focus:outline focus:outline-1 focus:outline-dotted focus:outline-black`}
           style={{
-            borderColor: isDragging ? "#6C7BFF" : "#2A2C35",
-            background: isDragging ? "rgba(108,123,255,0.06)" : "transparent",
+            background: isDragging ? "#000080" : "#ffffff",
+            color: isDragging ? "#ffffff" : "#000000",
           }}
         >
-          <p className="text-[#EDEAE3] font-medium">
+          <p className="font-bold flex items-center justify-center gap-1.5">
+            <FolderPlus className="w-4 h-4 inline-block text-[#FFA800] shrink-0" />
             Drop files here, or click to browse
           </p>
-          <p className="text-sm text-[#8A8D98] mt-1">Up to 50MB per file</p>
+          <p className="text-[10px] mt-1 text-[#404040]">
+            {isDragging ? "release to drop! =3" : "Up to 50MB per file"}
+          </p>
         </div>
       ) : (
-        /* Show the list layout instead when files count > 0! */
         <div className="flex flex-col gap-2 w-full">
-          <div className="flex items-center justify-between border-b border-[#2A2C35] pb-2 mb-2">
-            <h3 className="text-xs font-mono uppercase text-[#8A8D98]">
+          <div className="flex items-center justify-between border-b-2 border-dotted border-[#808080] pb-1 mb-1">
+            <h3 className="font-bold text-[#000080] uppercase tracking-wider">
               Staged Files ({stagedFiles.length})
             </h3>
             <button
-              onClick={() => fileInputRef.current?.click()}
-              className="text-xs font-mono px-2 py-1 rounded-md bg-[#23242C] text-[#6C7BFF] hover:bg-[#2A2C35] transition-colors"
+              onClick={openFilePicker}
+              className={`${raised} bg-[#c0c0c0] px-2 py-0.5 text-black font-bold flex items-center gap-1`}
             >
-              + Add Files
+              <Plus className="w-3.5 h-3.5 shrink-0 text-green-700" /> Add Files
             </button>
           </div>
 
-          {/* 💻 THE PREVIEW MATRIX: Columns stack/stretch on mobile, grids up on desktop! uwu~ */}
-          <div className="flex flex-col gap-4 sm:grid sm:grid-cols-2 md:grid-cols-3 justify-start items-stretch">
-            {stagedFiles.map((file, i) => {
-              // 🔮 Detect type and build a temporary url for image tags
+          <div className="flex flex-col gap-2 sm:grid sm:grid-cols-2 md:grid-cols-3 justify-start items-stretch">
+            {stagedFiles.map(({ id, file }) => {
               const isImg = file.type.startsWith("image/");
-              const localUrl = isImg ? URL.createObjectURL(file) : "";
+              const localUrl = imageUrls[id];
 
               return (
                 <div
-                  key={i}
-                  className="w-full sm:w-auto flex flex-col gap-2 p-3 rounded-md bg-[#14151A] border border-[#2A2C35] justify-between transition-transform duration-200"
+                  key={id}
+                  className={`w-full sm:w-auto flex flex-col gap-2 p-2 bg-[#c0c0c0] ${raised} justify-between`}
                 >
                   <div>
-                    {/* 📷 Square image preview frame box */}
-                    <div className="aspect-square w-full rounded-md bg-[#1B1C22] flex items-center justify-center overflow-hidden mb-2 select-none">
-                      {isImg ? (
+                    <div
+                      className={`aspect-square w-full ${inset} bg-white flex items-center justify-center overflow-hidden mb-2 select-none`}
+                    >
+                      {isImg && localUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={localUrl}
                           alt={file.name}
                           className="w-full h-full object-cover"
-                          onLoad={() => isImg && URL.revokeObjectURL(localUrl)} // Clean memory cache up after load! =3
                         />
                       ) : (
-                        <span className="text-3xl text-[#6C7BFF]">
-                          {/* Fallback to your file system icon type helpers */}
-                          {getFileGlyph?.(file.type, file.name) || "📄"}
-                        </span>
+                        <FileText className="w-8 h-8 text-[#000080]" />
                       )}
                     </div>
 
-                    {/* Title Metadata info lines */}
                     <div className="min-w-0 px-0.5">
                       <p
-                        className="text-xs text-[#EDEAE3] font-medium break-all line-clamp-1"
+                        className="font-medium break-all line-clamp-1 text-black"
                         title={file.name}
                       >
                         {file.name}
                       </p>
-                      <p className="text-[10px] font-mono text-[#8A8D98] mt-0.5">
+                      <p className="text-[10px] text-[#404040] mt-0.5">
                         {formatBytes?.(file.size) ||
                           `${(file.size / 1024).toFixed(1)} KB`}
                       </p>
                     </div>
                   </div>
 
-                  {/* Remove action deck trigger line */}
                   <button
-                    onClick={() => removeFile(i)}
-                    className="w-full text-xs font-mono text-center py-2 rounded-md bg-[#23242C] text-[#FF9F4A] border border-[#FF9F4A]/10 active:bg-[#2A2C35] transition-colors mt-1"
+                    onClick={() => removeFile(id)}
+                    className={`w-full text-center py-1 ${raised} bg-[#c0c0c0] text-[#800000] font-bold mt-1`}
                   >
                     remove
                   </button>
@@ -182,19 +290,18 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
           </div>
         </div>
       )}
-      {/* Settings Panel & Submit Actions (Only accessible when there are files!) */}
+
       {stagedFiles.length > 0 && (
-        <div className="mt-5 flex flex-col gap-4 border-t border-[#2A2C35] pt-4 animate-fadeIn">
-          {/* Responsive input cluster block */}
+        <div className="mt-4 flex flex-col gap-3 border-t-2 border-dotted border-[#808080] pt-3">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full">
             <div>
-              <label className="block text-xs font-mono text-[#8A8D98] mb-1">
+              <label className="block font-bold text-[#000080] mb-1">
                 expires in
               </label>
               <select
                 value={expiryDays}
                 onChange={(e) => setExpiryDays(Number(e.target.value))}
-                className="w-full bg-[#1B1C22] border border-[#2A2C35] text-[#EDEAE3] text-sm rounded-md px-3 py-2.5 outline-none focus:border-[#6C7BFF]"
+                className={`w-full bg-white ${inset} text-black px-2 py-1.5 outline-none`}
               >
                 {[1, 2, 3, 4, 5].map((d) => (
                   <option key={d} value={d}>
@@ -205,7 +312,7 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
             </div>
 
             <div className="sm:col-span-2">
-              <label className="block text-xs font-mono text-[#8A8D98] mb-1">
+              <label className="block font-bold text-[#000080] mb-1">
                 custom slug (optional)
               </label>
               <input
@@ -213,26 +320,48 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
                 value={customSlug}
                 onChange={(e) => setCustomSlug(e.target.value)}
                 placeholder="min 5 letters"
-                className="w-full bg-[#1B1C22] border border-[#2A2C35] text-[#EDEAE3] text-sm rounded-md px-3 py-2.5 placeholder:text-[#8A8D98] outline-none focus:border-[#6C7BFF]"
+                className={`w-full bg-white ${inset} text-black px-2 py-1.5 placeholder:text-[#808080] outline-none`}
               />
+              {slugError && (
+                <p className="text-[10px] text-[#800000] font-bold mt-1 flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-[#800000]" />{" "}
+                  {slugError}
+                </p>
+              )}
             </div>
           </div>
 
-          {/* Big beefy submit button for mobile phones */}
           <button
             onClick={handleSubmit}
-            disabled={isUploading}
-            className="w-full sm:w-auto sm:self-end px-6 py-2.5 rounded-md bg-[#6C7BFF] text-[#14151A] font-semibold text-sm hover:opacity-90 active:opacity-75 disabled:opacity-50 transition-opacity"
+            disabled={isUploading || !!slugError}
+            className={`w-full sm:w-auto sm:self-end px-5 py-1.5 ${raised} bg-[#c0c0c0] text-black font-bold disabled:opacity-50 flex items-center justify-center gap-1.5`}
           >
-            {isUploading ? "uploading…" : "upload thread"}
+            {isUploading ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" />{" "}
+                uploading…
+              </>
+            ) : (
+              <>
+                <Upload className="w-3.5 h-3.5 shrink-0 text-[#000080]" />{" "}
+                upload thread
+              </>
+            )}
           </button>
         </div>
       )}
+
       {error && (
-        <p className="mt-3 text-sm text-[#FF9F4A] font-mono">{error}</p>
+        <p className="mt-3 text-[#800000] font-bold flex items-center gap-1">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-[#800000]" />{" "}
+          {error}
+        </p>
       )}
+
       {snackbar && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-3 rounded-md bg-[#23242C] border border-[#2A2C35] text-sm text-[#EDEAE3] shadow-lg z-50">
+        <div
+          className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-[#c0c0c0] ${raised} text-black shadow-[3px_3px_0px_#000000] z-50`}
+        >
           {snackbar}
         </div>
       )}

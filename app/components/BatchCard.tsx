@@ -1,21 +1,89 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import {
+  FolderOpen,
+  AlertTriangle,
+  Trash2,
+  Check,
+  Copy,
+  Archive,
+  AlertCircle,
+  Download,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { Batch } from "@/lib/batches";
 import { getPublicUrl } from "@/lib/batches";
-import {
-  isImage,
-  getFileGlyph,
-  formatBytes,
-  getTimeLeft,
-} from "@/lib/fileDisplay";
+import { isImage, getFileGlyph, formatBytes } from "@/lib/fileDisplay";
 import { downloadBatchAsZip } from "@/lib/zipDownload";
 
 interface BatchCardProps {
   batch: Batch;
   isOwner?: boolean;
   onDeleteComplete?: () => void;
+}
+
+const OWNED_SLUGS_KEY = "looming_owned_slugs";
+
+// Reusable Win95 border styling tokens =3
+const inset =
+  "border-2 border-t-[#808080] border-l-[#808080] border-r-[#ffffff] border-b-[#ffffff]";
+const raised =
+  "border-2 border-t-[#ffffff] border-l-[#ffffff] border-r-[#808080] border-b-[#808080] active:border-t-[#808080] active:border-l-[#808080] active:border-r-[#ffffff] active:border-b-[#ffffff]";
+
+function readOwnedSlugs(): string[] {
+  if (typeof window === "undefined") return [];
+  const raw = localStorage.getItem(OWNED_SLUGS_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    console.warn("⚠️ owned_slugs in localStorage was corrupted, resetting >w<");
+    localStorage.removeItem(OWNED_SLUGS_KEY);
+    return [];
+  }
+}
+
+function formatRemainingTime(ms: number): { label: string; urgency: number } {
+  if (ms <= 0) return { label: "Expired ⏳", urgency: 1 };
+
+  const totalSeconds = Math.floor(ms / 1000);
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const totalHours = Math.floor(totalMinutes / 60);
+  const totalDays = Math.floor(totalHours / 24);
+
+  const maxWindow = 24 * 60 * 60 * 1000;
+  const urgency = Math.min(1, Math.max(0, 1 - ms / maxWindow));
+
+  if (totalMinutes < 5) {
+    const s = totalSeconds % 60;
+    return {
+      label: `${totalMinutes}m ${s.toString().padStart(2, "0")}s`,
+      urgency,
+    };
+  }
+
+  if (totalHours < 1) {
+    return {
+      label: `${totalMinutes}m left`,
+      urgency,
+    };
+  }
+
+  if (totalDays < 1) {
+    const m = totalMinutes % 60;
+    return {
+      label: `${totalHours}h ${m.toString().padStart(2, "0")}m`,
+      urgency,
+    };
+  }
+
+  const h = totalHours % 24;
+  return {
+    label: `${totalDays}d ${h}h left`,
+    urgency: 0,
+  };
 }
 
 export default function BatchCard({
@@ -26,11 +94,14 @@ export default function BatchCard({
   const [copied, setCopied] = useState(false);
   const [zipping, setZipping] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  // Replace your old hook line with this initialization pairing element:
+  const [actionError, setActionError] = useState<string | null>(null);
   const [timeLeftStr, setTimeLeftStr] = useState({
     label: "Calculating...",
     urgency: 0,
   });
+
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const targetTime = new Date(batch.expires_at).getTime();
@@ -38,7 +109,7 @@ export default function BatchCard({
     const updateTimer = () => {
       const now = Date.now();
       const difference = targetTime - now;
-      setTimeLeftStr(formatRemainingTime(difference)); // Setting object payload!
+      setTimeLeftStr(formatRemainingTime(difference));
     };
 
     updateTimer();
@@ -47,53 +118,99 @@ export default function BatchCard({
     return () => clearInterval(intervalId);
   }, [batch.expires_at]);
 
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    };
+  }, []);
+
   const { label, urgency } = timeLeftStr;
-  const threadOpacity = 1 - urgency * 0.75;
+  const isExpired = label.startsWith("Expired");
+  const isUrgent = urgency > 0.7;
 
   const shareUrl =
     typeof window !== "undefined"
       ? `${window.location.origin}/${batch.slug}`
       : `/${batch.slug}`;
 
+  function flashError(message: string) {
+    setActionError(message);
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    errorTimerRef.current = setTimeout(() => setActionError(null), 4000);
+  }
+
   async function handleCopyLink() {
-    await navigator.clipboard.writeText(shareUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = shareUrl;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setCopied(true);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => setCopied(false), 1800);
+    } catch (err) {
+      console.error("Clipboard copy failed:", err);
+      flashError("couldn't copy — copy the link manually");
+    }
   }
 
   async function handleZipDownload() {
     setZipping(true);
     try {
       await downloadBatchAsZip(batch.slug, batch.files);
+    } catch (err) {
+      console.error("Zip download failed:", err);
+      flashError("zip download failed, try again");
     } finally {
       setZipping(false);
     }
   }
 
   async function handleDeleteThread() {
-    if (
-      !confirm("Are you sure you want to sever this thread permanently? (´W`);")
-    )
+    if (!confirm("Are you sure you want to sever this thread permanently? (´W`)"))
       return;
     setDeleting(true);
     try {
-      const { error } = await supabase
+      // 1. Collect all storage paths for this batch =3!
+      const storagePaths = batch.files.map((file) => file.storage_path);
+
+      // 2. Delete files from Supabase Storage bucket first (replace 'files' with your actual bucket name)
+      if (storagePaths.length > 0) {
+        const { error: storageError } = await supabase.storage
+          .from("looming-files") // 👈 Replace with your actual bucket name if different!
+          .remove(storagePaths);
+
+        if (storageError) {
+          console.error("Storage deletion error:", storageError);
+          flashError("thread deleted, but some files may remain in storage");
+        }
+      }
+
+      // 3. Delete the batch row from the database >w<
+      const { error: dbError } = await supabase
         .from("batches")
         .delete()
         .eq("slug", batch.slug);
-      if (error) throw error;
 
-      const savedSlugsJson = localStorage.getItem("looming_owned_slugs");
-      if (savedSlugsJson) {
-        const currentSlugs: string[] = JSON.parse(savedSlugsJson);
-        localStorage.setItem(
-          "looming_owned_slugs",
-          JSON.stringify(currentSlugs.filter((s) => s !== batch.slug)),
-        );
-      }
+      if (dbError) throw dbError;
+
+      // 4. Clear local storage reference
+      const currentSlugs = readOwnedSlugs();
+      localStorage.setItem(
+        OWNED_SLUGS_KEY,
+        JSON.stringify(currentSlugs.filter((s) => s !== batch.slug)),
+      );
+
       if (onDeleteComplete) onDeleteComplete();
     } catch (err) {
-      alert("Failed to delete thread safely.");
+      flashError("failed to delete thread safely");
       console.error(err);
     } finally {
       setDeleting(false);
@@ -101,69 +218,86 @@ export default function BatchCard({
   }
 
   return (
-    /* 💻 Keep the main outer card spanning full width on ALL screens! uwu~ */
-    <div className="relative pl-4 sm:pl-5 rounded-lg bg-[#1B1C22] border border-[#2A2C35] overflow-hidden w-full">
-      {/* The fading thread */}
+    <div
+      className={`bg-[#c0c0c0] ${raised} w-full font-mono text-xs text-black`}
+      role="region"
+      aria-label={`Batch ${batch.slug}`}
+    >
+      {/* Title bar strip */}
       <div
-        className="absolute left-0 top-0 bottom-0 w-[3px] rounded-full"
+        className="px-2 py-1 flex items-center justify-between text-white font-bold select-none"
         style={{
-          background: urgency > 0.7 ? "#FF9F4A" : "#6C7BFF",
-          opacity: threadOpacity,
-          transition: "opacity 0.6s ease, background 0.6s ease",
+          background: isExpired
+            ? "#808080"
+            : isUrgent
+              ? "linear-gradient(to right, #a02c2c, #d9534f)"
+              : "linear-gradient(to right, #000080, #1084d0)",
         }}
-      />
+      >
+        <span className="truncate flex items-center gap-1.5">
+          <FolderOpen className="w-3.5 h-3.5 inline-block shrink-0" />
+          /{batch.slug}
+        </span>
+        <span className="text-[10px] whitespace-nowrap ml-2 flex items-center gap-1">
+          {isExpired ? (
+            <>
+              <AlertTriangle className="w-3 h-3 inline-block shrink-0" />
+              expired
+            </>
+          ) : (
+            label
+          )}
+        </span>
+      </div>
 
-      <div className="p-4 sm:p-5">
-        {/* Header Row */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
-          <div className="flex items-center justify-between sm:justify-start gap-3 w-full sm:w-auto">
-            <span className="font-mono text-sm text-[#EDEAE3]">
-              /{batch.slug}
-            </span>
-            <span
-              className="font-mono text-[10px] sm:text-xs px-2 py-0.5 rounded-full whitespace-nowrap"
-              style={{
-                color: urgency > 0.7 ? "#FF9F4A" : "#8A8D98",
-                border: `1px solid ${urgency > 0.7 ? "#FF9F4A" : "#2A2C35"}`,
-              }}
-            >
-              {label}
-            </span>
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex items-center gap-2 w-full sm:w-auto justify-start sm:justify-end overflow-x-auto no-scrollbar">
-            {isOwner && (
-              <button
-                onClick={handleDeleteThread}
-                disabled={deleting}
-                className="text-xs font-mono px-2.5 py-1.5 rounded-md bg-[#23242C] text-[#FF9F4A] border border-[#FF9F4A]/20 active:bg-[#2A2C35] transition-colors disabled:opacity-40 whitespace-nowrap"
-              >
-                {deleting ? "shredding…" : "delete"}
-              </button>
-            )}
+      <div className="p-3">
+        {/* Action buttons */}
+        <div className="flex items-center gap-2 w-full justify-start overflow-x-auto no-scrollbar mb-3">
+          {isOwner && (
             <button
-              onClick={handleCopyLink}
-              className="text-xs font-mono px-2.5 py-1.5 rounded-md bg-[#23242C] text-[#EDEAE3] active:bg-[#2A2C35] transition-colors whitespace-nowrap"
+              onClick={handleDeleteThread}
+              disabled={deleting}
+              className={`px-2 py-1 ${raised} bg-[#c0c0c0] text-[#800000] font-bold disabled:opacity-40 whitespace-nowrap flex items-center gap-1.5`}
             >
-              {copied ? "copied" : "copy link"}
+              <Trash2 className="w-3.5 h-3.5 shrink-0" />
+              {deleting ? "shredding…" : "delete"}
             </button>
-            {batch.files.length > 1 && (
-              <button
-                onClick={handleZipDownload}
-                disabled={zipping}
-                className="text-xs font-mono px-2.5 py-1.5 rounded-md bg-[#6C7BFF] text-[#14151A] active:opacity-80 disabled:opacity-50 transition-opacity whitespace-nowrap"
-              >
-                {zipping ? "zipping…" : "download all (.zip)"}
-              </button>
+          )}
+          <button
+            onClick={handleCopyLink}
+            disabled={isExpired}
+            className={`px-2 py-1 ${raised} bg-[#c0c0c0] text-black font-bold disabled:opacity-40 whitespace-nowrap flex items-center gap-1.5`}
+          >
+            {copied ? (
+              <Check className="w-3.5 h-3.5 shrink-0 text-green-700" />
+            ) : (
+              <Copy className="w-3.5 h-3.5 shrink-0" />
             )}
-          </div>
+            {copied ? "copied" : "copy link"}
+          </button>
+          {batch.files.length > 1 && (
+            <button
+              onClick={handleZipDownload}
+              disabled={zipping || isExpired}
+              className={`px-2 py-1 ${raised} bg-[#c0c0c0] text-[#000080] font-bold disabled:opacity-40 whitespace-nowrap flex items-center gap-1.5`}
+            >
+              <Archive className="w-3.5 h-3.5 shrink-0" />
+              {zipping ? "zipping…" : "download all (.zip)"}
+            </button>
+          )}
         </div>
 
-        {/* 💻 THE LAYOUT MATRIX: Stacks vertically on mobile, switches to strict grids on desktop! =3 */}
-        <div className="flex flex-col gap-4 sm:grid sm:grid-cols-2 md:grid-cols-3 justify-start items-stretch">
+        {actionError && (
+          <p className="text-[#800000] font-bold mb-3 -mt-1 flex items-center gap-1">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            {actionError}
+          </p>
+        )}
+
+        {/* File grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 justify-start items-stretch">
           {batch.files.map((file) => (
-            <FileTile key={file.id} file={file} />
+            <FileTile key={file.id} file={file} disabled={isExpired} />
           ))}
         </div>
       </div>
@@ -171,17 +305,25 @@ export default function BatchCard({
   );
 }
 
-// ==========================================
-// UNIFIED RESPONSIVE SUB-COMPONENT
-// ==========================================
-function FileTile({ file }: { file: Batch["files"][number] }) {
+function FileTile({
+  file,
+  disabled = false,
+}: {
+  file: Batch["files"][number];
+  disabled?: boolean;
+}) {
   const url = getPublicUrl(file.storage_path);
   const showImage = isImage(file.mime_type);
 
+  // Resolve icon using correct BatchFile property names =3!
+  const FileIcon = getFileGlyph(file.mime_type, file.filename);
+
   async function handleDownload(e: React.MouseEvent) {
     e.preventDefault();
+    if (disabled) return;
     try {
       const response = await fetch(url);
+      if (!response.ok) throw new Error(`fetch failed: ${response.status}`);
       const blob = await response.blob();
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -198,33 +340,34 @@ function FileTile({ file }: { file: Batch["files"][number] }) {
   }
 
   return (
-    /* ⚡ THE FIXED CLASS: w-full pushes it edge-to-edge on mobile, sm:w-auto fits the desktop grid slots! >w< */
-    <div className="w-full sm:w-auto flex flex-col gap-2 p-3 rounded-md bg-[#14151A] border border-[#2A2C35] justify-between transition-transform duration-200">
+    <div
+      className={`w-full flex flex-col gap-2 p-2 bg-[#c0c0c0] ${raised} justify-between`}
+    >
       <div>
-        {/* 📷 The Preview Frame: aspect-square and w-full makes sure the image scales seamlessly to match the full tile width on mobile screens! */}
-        <div className="aspect-square w-full rounded-md bg-[#1B1C22] flex items-center justify-center overflow-hidden mb-2 select-none">
+        <div
+          className={`aspect-square w-full ${inset} bg-white flex items-center justify-center overflow-hidden mb-2 select-none`}
+        >
           {showImage ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={url}
               alt={file.filename}
               className="w-full h-full object-cover"
+              loading="lazy"
             />
           ) : (
-            <span className="text-3xl text-[#6C7BFF]">
-              {getFileGlyph(file.mime_type, file.filename)}
-            </span>
+            <FileIcon className="w-8 h-8 text-[#000080]" />
           )}
         </div>
 
         <div className="min-w-0 px-0.5">
           <p
-            className="text-xs text-[#EDEAE3] font-medium break-all line-clamp-1"
+            className="font-medium break-all line-clamp-1 text-black"
             title={file.filename}
           >
             {file.filename}
           </p>
-          <p className="text-[10px] font-mono text-[#8A8D98] mt-0.5">
+          <p className="text-[10px] text-[#404040] mt-0.5">
             {formatBytes(file.size)}
           </p>
         </div>
@@ -232,56 +375,12 @@ function FileTile({ file }: { file: Batch["files"][number] }) {
 
       <button
         onClick={handleDownload}
-        className="w-full text-xs font-mono text-center py-2 rounded-md bg-[#23242C] text-[#EDEAE3] active:bg-[#2A2C35] active:text-[#6C7BFF] transition-colors mt-1"
+        disabled={disabled}
+        className={`w-full text-center py-1 ${raised} bg-[#c0c0c0] text-black font-bold mt-1 disabled:opacity-40 flex items-center justify-center gap-1.5`}
       >
+        <Download className="w-3.5 h-3.5 shrink-0" />
         download
       </button>
     </div>
   );
-}
-
-function formatRemainingTime(ms: number): { label: string; urgency: number } {
-  if (ms <= 0) return { label: "Expired ⏳", urgency: 1 };
-
-  const totalSeconds = Math.floor(ms / 1000);
-  const totalMinutes = Math.floor(totalSeconds / 60);
-  const totalHours = Math.floor(totalMinutes / 60);
-  const totalDays = Math.floor(totalHours / 24);
-
-  // Calculate opacity urgency context factor based on a standard 24-hour cycle fallback window
-  const maxWindow = 24 * 60 * 60 * 1000;
-  const urgency = Math.min(1, Math.max(0, 1 - ms / maxWindow));
-
-  // 1. 🚨 Below 5 minutes: minutes + seconds
-  if (totalMinutes < 5) {
-    const s = totalSeconds % 60;
-    return {
-      label: `${totalMinutes}m ${s.toString().padStart(2, "0")}s`,
-      urgency,
-    };
-  }
-
-  // 2. 🕒 Below an hour: just minutes
-  if (totalHours < 1) {
-    return {
-      label: `${totalMinutes}m left`,
-      urgency,
-    };
-  }
-
-  // 3. 🗓️ Below 24 hours: hours + minutes
-  if (totalDays < 1) {
-    const m = totalMinutes % 60;
-    return {
-      label: `${totalHours}h ${m.toString().padStart(2, "0")}m`,
-      urgency,
-    };
-  }
-
-  // 4. 💎 Extended Long-Term Pass: days + hours (keeps urgency low so it stays fully visible! =3)
-  const h = totalHours % 24;
-  return {
-    label: `${totalDays}d ${h}h left`,
-    urgency: 0, // Keep thread crisp and solid for admin passes!
-  };
 }
