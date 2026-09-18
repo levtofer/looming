@@ -23,7 +23,6 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
-  background-image: url("https://i.pinimg.com/236x/25/aa/1a/25aa1a16b78d63f639b04b8427d4f2d6.jpg");
   background-repeat: no-repeat;
   background-position: center;
   background-size: cover;
@@ -31,7 +30,6 @@ body {
   min-height: 100vh;
 }
 
-/* ⚡ Custom tight terminal alarm micro-pulse at the bottom of globals.css! */
 @keyframes mini-ping {
   0% {
     transform: scale(1);

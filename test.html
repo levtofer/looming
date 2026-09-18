@@ -1,441 +1,439 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>looming_ - Expanded Windows 95 Explorer</title>
-    <style>
-        /* Win95 Base Reset uwu */
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: 'MS Sans Serif', 'Tahoma', sans-serif;
-            font-size: 11px;
-        }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>you are still here</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400&family=Libre+Baskerville:ital@0;1&display=swap');
 
-        body {
-            background-color: #008080; /* Classic Win95 Teal */
-            color: #000000;
-            min-height: 100vh;
-            padding: 20px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
 
-        /* Expanded Explorer Outer Window OwO */
-        .explorer-window {
-            width: 100%;
-            max-width: 1080px; /* Bigger canvas size! */
-            background: #c0c0c0;
-            border: 2px solid;
-            border-color: #ffffff #dfdfdf #808080 #404040;
-            box-shadow: 3px 3px 0px #000000;
-            padding: 2px;
-            display: flex;
-            flex-direction: column;
-        }
+:root {
+    --bg: #080807;
+    --dim: #24231f;
+    --text: #b7b2a4;
+    --faint: #555249;
+    --red: #6f2828;
+}
 
-        /* Title Bar >w< */
-        .title-bar {
-            background: linear-gradient(90deg, #000080, #1084d0);
-            padding: 4px 8px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            color: #ffffff;
-            font-weight: bold;
-            font-size: 12px;
-        }
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+}
 
-        .title-controls {
-            display: flex;
-            gap: 2px;
-        }
+body {
+    font-family: "IBM Plex Mono", monospace;
+    position: relative;
+}
 
-        .win-btn {
-            width: 16px;
-            height: 14px;
-            background: #c0c0c0;
-            border: 1px solid;
-            border-color: #ffffff #808080 #808080 #ffffff;
-            font-size: 9px;
-            font-weight: bold;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            color: #000;
-        }
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: .16;
+    background:
+        repeating-linear-gradient(
+            0deg,
+            rgba(255,255,255,.035) 0px,
+            rgba(255,255,255,.035) 1px,
+            transparent 1px,
+            transparent 4px
+        );
+    z-index: 20;
+}
 
-        .win-btn:active {
-            border-color: #808080 #ffffff #ffffff #808080;
-        }
+body::after {
+    content: "";
+    position: fixed;
+    inset: -20%;
+    pointer-events: none;
+    background: radial-gradient(
+        ellipse at center,
+        transparent 20%,
+        rgba(0,0,0,.72) 78%,
+        #000 100%
+    );
+    z-index: 19;
+}
 
-        /* Menu Bar :-3 */
-        .menu-bar {
-            display: flex;
-            gap: 14px;
-            padding: 4px 8px;
-            border-bottom: 1px solid #808080;
-            background: #c0c0c0;
-        }
+.noise {
+    position: fixed;
+    inset: 0;
+    opacity: .035;
+    z-index: 18;
+    pointer-events: none;
+    background-image:
+        url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E");
+}
 
-        .menu-item {
-            cursor: pointer;
-        }
+.room {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
 
-        .menu-item::first-letter {
-            text-decoration: underline;
-        }
+.window {
+    position: absolute;
+    width: 260px;
+    height: 390px;
+    top: 7%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 1px solid #1d1c19;
+    background:
+        linear-gradient(
+            90deg,
+            transparent 49.5%,
+            #1a1916 49.5%,
+            #1a1916 50.5%,
+            transparent 50.5%
+        ),
+        linear-gradient(
+            0deg,
+            transparent 49.5%,
+            #1a1916 49.5%,
+            #1a1916 50.5%,
+            transparent 50.5%
+        ),
+        #0b0b09;
+    box-shadow:
+        0 0 80px rgba(40,40,32,.08),
+        inset 0 0 50px #000;
+}
 
-        /* Toolbar / Address Bar x3 */
-        .toolbar {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 8px;
-            border-bottom: 1px solid #ffffff;
-            box-shadow: 0 1px 0 #808080;
-            background: #c0c0c0;
-        }
+.window::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+        radial-gradient(
+            ellipse at 50% 55%,
+            rgba(100,100,85,.035),
+            transparent 55%
+        );
+}
 
-        .address-box {
-            flex: 1;
-            background: #ffffff;
-            border: 2px solid;
-            border-color: #808080 #404040 #ffffff #dfdfdf;
-            padding: 3px 8px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
+.shadow {
+    position: absolute;
+    width: 150px;
+    height: 290px;
+    left: calc(50% + 160px);
+    top: 21%;
+    opacity: .13;
+    filter: blur(16px);
+    background: #000;
+    border-radius: 50% 50% 15% 15%;
+    transform: scaleX(.65);
+}
 
-        .address-box input {
-            border: none;
-            outline: none;
-            width: 100%;
-            font-family: 'Courier New', monospace;
-            font-weight: bold;
-            font-size: 12px;
-            color: #000;
-            background: transparent;
-        }
+.table {
+    position: absolute;
+    bottom: 13%;
+    width: 560px;
+    height: 1px;
+    background: #24231f;
+    box-shadow: 0 20px 40px rgba(0,0,0,.7);
+}
 
-        /* Main Workspace Split View ^w^ */
-        .workspace {
-            display: flex;
-            gap: 6px;
-            padding: 6px;
-            height: 520px; /* Taller main viewport! */
-        }
+.lamp {
+    position: absolute;
+    bottom: calc(13% + 1px);
+    width: 80px;
+    height: 90px;
+    transform: translateY(50%);
+}
 
-        /* Left Side: Tree Navigation >:-3 */
-        .sidebar-tree {
-            width: 220px;
-            background: #ffffff;
-            border: 2px solid;
-            border-color: #808080 #404040 #ffffff #dfdfdf;
-            padding: 8px;
-            overflow-y: auto;
-        }
+.lamp::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: 1px;
+    height: 35px;
+    background: #302f29;
+}
 
-        .tree-item {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            padding: 3px 4px;
-            cursor: pointer;
-            user-select: none;
-        }
+.lamp::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: 8px;
+    width: 45px;
+    height: 30px;
+    transform: translateX(-50%);
+    border-radius: 50% 50% 8px 8px;
+    background: #26251f;
+    box-shadow: 0 0 70px rgba(150,140,90,.08);
+}
 
-        .tree-item.active {
-            background: #000080;
-            color: #ffffff;
-        }
+.content {
+    position: relative;
+    z-index: 5;
+    width: min(650px, 80vw);
+    margin-top: 16vh;
+}
 
-        /* Right Side: Main Content Area UwUwU */
-        .main-content {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
+.meta {
+    display: flex;
+    justify-content: space-between;
+    color: var(--faint);
+    font-size: 10px;
+    letter-spacing: .2em;
+    margin-bottom: 65px;
+    text-transform: uppercase;
+}
 
-        /* Interactive Drop Zone Area */
-        .drop-section {
-            background: #ffffff;
-            border: 2px dashed #808080;
-            padding: 16px;
-            text-align: center;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
+.title {
+    font-family: "Libre Baskerville", serif;
+    font-size: clamp(30px, 5vw, 58px);
+    font-weight: 400;
+    line-height: 1.15;
+    letter-spacing: -.04em;
+    color: #aaa69a;
+    position: relative;
+    width: fit-content;
+}
 
-        .drop-section.drag-over {
-            background: #ffffcc;
-            border-color: #000080;
-        }
+.title::after {
+    content: "you are still here";
+    position: absolute;
+    inset: 0;
+    color: var(--red);
+    opacity: 0;
+    transform: translate(2px, 0);
+}
 
-        /* Table List View */
-        .file-list-container {
-            flex: 1;
-            background: #ffffff;
-            border: 2px solid;
-            border-color: #808080 #404040 #ffffff #dfdfdf;
-            overflow-y: auto;
-        }
+.title.glitch::after {
+    opacity: .4;
+    animation: glitch 180ms steps(2) infinite;
+}
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            text-align: left;
-        }
+.subtitle {
+    margin-top: 20px;
+    color: #504d45;
+    font-size: 11px;
+    letter-spacing: .12em;
+}
 
-        th {
-            background: #c0c0c0;
-            border: 1px solid;
-            border-color: #ffffff #808080 #808080 #ffffff;
-            padding: 4px 8px;
-            font-weight: normal;
-            position: sticky;
-            top: 0;
-            user-select: none;
-        }
+.message {
+    margin-top: 90px;
+    max-width: 390px;
+    color: #68645b;
+    font-size: 12px;
+    line-height: 2;
+}
 
-        td {
-            padding: 5px 8px;
-            white-space: nowrap;
-            border-bottom: 1px solid #f0f0f0;
-        }
+.message span {
+    display: block;
+}
 
-        tr:hover td {
-            background: #000080;
-            color: #ffffff;
-        }
+.message .hidden {
+    color: #171613;
+    transition: color 2s ease;
+}
 
-        /* Win95 Action Buttons */
-        .win-btn-action {
-            background: #c0c0c0;
-            border: 1px solid;
-            border-color: #ffffff #808080 #808080 #ffffff;
-            padding: 2px 8px;
-            cursor: pointer;
-            font-size: 10px;
-            font-weight: bold;
-        }
+.message:hover .hidden {
+    color: #5b2929;
+}
 
-        .win-btn-action:active {
-            border-color: #808080 #ffffff #ffffff #808080;
-        }
+.clock {
+    position: fixed;
+    right: 35px;
+    bottom: 28px;
+    color: #3b3933;
+    font-size: 10px;
+    letter-spacing: .12em;
+}
 
-        .btn-danger {
-            color: #a00000;
-        }
+.status {
+    position: fixed;
+    left: 35px;
+    bottom: 28px;
+    color: #332f2b;
+    font-size: 9px;
+    letter-spacing: .18em;
+}
 
-        /* Status Bar at Bottom */
-        .status-bar {
-            border-top: 1px solid #ffffff;
-            box-shadow: inset 0 1px 0 #808080;
-            padding: 4px 6px;
-            display: flex;
-            gap: 8px;
-            background: #c0c0c0;
-        }
+.dot {
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    margin-right: 8px;
+    border-radius: 50%;
+    background: #4a2424;
+    box-shadow: 0 0 8px #4a2424;
+    animation: pulse 3s infinite;
+}
 
-        .status-cell {
-            border: 1px solid;
-            border-color: #808080 #ffffff #ffffff #808080;
-            padding: 2px 8px;
-            color: #404040;
-            font-size: 11px;
-        }
-    </style>
+.whisper {
+    position: fixed;
+    z-index: 10;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    color: #292720;
+    font-size: 8px;
+    letter-spacing: .4em;
+    opacity: 0;
+    pointer-events: none;
+}
+
+body.awake .whisper {
+    animation: whisper 7s ease forwards;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: .2; }
+    50% { opacity: 1; }
+}
+
+@keyframes glitch {
+    0% { clip-path: inset(20% 0 65% 0); }
+    50% { clip-path: inset(65% 0 15% 0); }
+    100% { clip-path: inset(40% 0 35% 0); }
+}
+
+@keyframes whisper {
+    0% { opacity: 0; }
+    20% { opacity: .15; }
+    35% { opacity: 0; }
+    55% { opacity: .12; }
+    70% { opacity: 0; }
+    100% { opacity: 0; }
+}
+
+@media (max-width: 600px) {
+    .window {
+        width: 190px;
+        height: 300px;
+    }
+
+    .shadow {
+        display: none;
+    }
+
+    .table {
+        width: 80vw;
+    }
+
+    .meta {
+        margin-bottom: 40px;
+    }
+
+    .message {
+        margin-top: 55px;
+    }
+
+    .status,
+    .clock {
+        bottom: 18px;
+    }
+
+    .status {
+        left: 18px;
+    }
+
+    .clock {
+        right: 18px;
+    }
+}
+</style>
 </head>
 <body>
 
-    <div class="explorer-window">
-        <!-- Title Bar :3 -->
-        <div class="title-bar">
-            <span>📁 Exploring - C:\looming_\active_drops</span>
-            <div class="title-controls">
-                <button class="win-btn">_</button>
-                <button class="win-btn">□</button>
-                <button class="win-btn" onclick="alert('Window cannot be closed during active session! =3')">×</button>
-            </div>
-        </div>
+<div class="noise"></div>
 
-        <!-- Menu Bar ^3^ -->
-        <div class="menu-bar">
-            <span class="menu-item" onclick="triggerFileSelect()">File</span>
-            <span class="menu-item" onclick="alert('looming_ v1.095 - Transient Storage Engine =3')">Edit</span>
-            <span class="menu-item">View</span>
-            <span class="menu-item">Tools</span>
-            <span class="menu-item" onclick="alert('Your friends access files directly using the Thread Slug URL! >w<')">Help</span>
-        </div>
+<div class="room">
+    <div class="window"></div>
+    <div class="shadow"></div>
+    <div class="table"></div>
+    <div class="lamp"></div>
+</div>
 
-        <!-- Address Bar OwO -->
-        <div class="toolbar">
-            <span>Address:</span>
-            <div class="address-box">
-                <span>📁</span>
-                <input type="text" id="addressInput" value="C:\looming_\active_drops" readonly>
-            </div>
-            <button class="win-btn-action" onclick="triggerFileSelect()">Upload Drop 🚀</button>
-        </div>
-
-        <!-- Main Workspace >w< -->
-        <div class="workspace">
-            
-            <!-- Left Navigation Tree :-3 -->
-            <div class="sidebar-tree">
-                <div class="tree-item">💻 Desktop</div>
-                <div class="tree-item"> └ 🖴 (C:) Hard Drive</div>
-                <div class="tree-item"> &nbsp;&nbsp; └ 📁 looming_</div>
-                <div class="tree-item active"> &nbsp;&nbsp;&nbsp;&nbsp; ├ 📁 active_drops</div>
-                <div class="tree-item"> &nbsp;&nbsp;&nbsp;&nbsp; └ 📁 trash_bin</div>
-                <div class="tree-item"> └ 🌐 Network Places</div>
-            </div>
-
-            <!-- Right Main Area x3 -->
-            <div class="main-content">
-                
-                <!-- Interactive File Drop Zone Area ^w^ -->
-                <div class="drop-section" id="dropZone" onclick="triggerFileSelect()">
-                    <p style="font-weight: bold; font-size: 12px; margin-bottom: 2px;">✦ Drop a new thread into folder</p>
-                    <p style="color: #606060; font-size: 10px;">Drag files here or click to browse (Max 100MB per batch)</p>
-                    <input type="file" id="fileInput" multiple style="display: none;" onchange="handleFileSelect(event)">
-                </div>
-
-                <!-- Table List View >:-3 -->
-                <div class="file-list-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Name / Slug</th>
-                                <th>File Name</th>
-                                <th>Size</th>
-                                <th>Expires In</th>
-                                <th>Action</th>
-                            </tr>
-                        </thead>
-                        <tbody id="fileTableBody">
-                            <tr>
-                                <td><b>/thread-x89a</b></td>
-                                <td>📄 project_assets.zip</td>
-                                <td>14.2 MB</td>
-                                <td>18 hours</td>
-                                <td>
-                                    <button class="win-btn-action" onclick="copyLink('/thread-x89a')">Copy</button>
-                                    <button class="win-btn-action btn-danger" onclick="deleteRow(this)">Delete</button>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td><b>/thread-k32z</b></td>
-                                <td>🖼️ screenshot_ui_v2.png</td>
-                                <td>2.4 MB</td>
-                                <td>2 hours</td>
-                                <td>
-                                    <button class="win-btn-action" onclick="copyLink('/thread-k32z')">Copy</button>
-                                    <button class="win-btn-action btn-danger" onclick="deleteRow(this)">Delete</button>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-
-            </div>
-        </div>
-
-        <!-- Functional Status Bar (UwUwU) -->
-        <div class="status-bar">
-            <div class="status-cell" id="objectCount" style="flex: 2;">2 object(s) active</div>
-            <div class="status-cell" style="flex: 1;">● local context active</div>
-            <div class="status-cell" id="sysClock" style="flex: 1; text-align: right;">12:00 PM</div>
-        </div>
+<div class="content">
+    <div class="meta">
+        <span>archive / 04</span>
+        <span id="date">00:00:00</span>
     </div>
 
-    <script>
-        // Trigger hidden file picker x3
-        function triggerFileSelect() {
-            document.getElementById('fileInput').click();
-        }
+    <h1 class="title" id="title">you are still here</h1>
 
-        // Handle File Selection and Add Row Live! >w<
-        function handleFileSelect(event) {
-            const files = event.target.files;
-            if (!files.length) return;
+    <p class="subtitle">
+        nobody has been here for a while.
+    </p>
 
-            const tableBody = document.getElementById('fileTableBody');
+    <div class="message">
+        <span>the room remembers the shape of you.</span>
+        <span>the chair is still facing the door.</span>
+        <span>the light was left on.</span>
+        <span class="hidden">don't turn around.</span>
+    </div>
+</div>
 
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i];
-                const randomSlug = '/thread-' + Math.random().toString(36).substring(2, 6);
-                const fileSize = (file.size / (1024 * 1024)).toFixed(1) + " MB";
+<div class="whisper">DON'T LOOK BEHIND YOU</div>
 
-                const newRow = document.createElement('tr');
-                newRow.innerHTML = `
-                    <td><b>${randomSlug}</b></td>
-                    <td>📄 ${file.name}</td>
-                    <td>${fileSize}</td>
-                    <td>24 hours</td>
-                    <td>
-                        <button class="win-btn-action" onclick="copyLink('${randomSlug}')">Copy</button>
-                        <button class="win-btn-action btn-danger" onclick="deleteRow(this)">Delete</button>
-                    </td>
-                `;
-                tableBody.appendChild(newRow);
-            }
-            updateStatus();
-        }
+<div class="status">
+    <span class="dot"></span>
+    SIGNAL PRESENT
+</div>
 
-        // Functional Delete Button >:-3
-        function deleteRow(btn) {
-            const row = btn.closest('tr');
-            row.remove();
-            updateStatus();
-        }
+<div class="clock" id="clock">--:--:--</div>
 
-        // Copy Link Action ^w^
-        function copyLink(slug) {
-            navigator.clipboard.writeText(window.location.origin + slug);
-            alert("Copied thread link: " + slug + " !! >w<");
-        }
+<script>
+const clock = document.getElementById("clock");
+const title = document.getElementById("title");
 
-        // Live Status Cell Updater OwO
-        function updateStatus() {
-            const rowCount = document.querySelectorAll('#fileTableBody tr').length;
-            document.getElementById('objectCount').textContent = `${rowCount} object(s) active`;
-        }
+function updateClock() {
+    const now = new Date();
+    clock.textContent = now.toLocaleTimeString("en-GB", {
+        hour12: false
+    });
+}
 
-        // Drag & Drop visual state handling :-3
-        const dropZone = document.getElementById('dropZone');
-        ['dragenter', 'dragover'].forEach(name => {
-            dropZone.addEventListener(name, (e) => {
-                e.preventDefault();
-                dropZone.classList.add('drag-over');
-            }, false);
-        });
-        ['dragleave', 'drop'].forEach(name => {
-            dropZone.addEventListener(name, (e) => {
-                e.preventDefault();
-                dropZone.classList.remove('drag-over');
-            }, false);
-        });
-        dropZone.addEventListener('drop', (e) => {
-            const dt = e.dataTransfer;
-            const files = dt.files;
-            handleFileSelect({ target: { files: files } });
-        });
+setInterval(updateClock, 1000);
+updateClock();
 
-        // System Clock Functionality =3
-        function updateClock() {
-            const now = new Date();
-            document.getElementById('sysClock').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        }
-        setInterval(updateClock, 1000);
-        updateClock();
-    </script>
+setTimeout(() => {
+    document.body.classList.add("awake");
+}, 3500);
+
+setInterval(() => {
+    if (Math.random() < 0.18) {
+        title.classList.add("glitch");
+
+        setTimeout(() => {
+            title.classList.remove("glitch");
+        }, 180 + Math.random() * 300);
+    }
+}, 2500);
+
+document.addEventListener("mousemove", e => {
+    const x = (e.clientX / window.innerWidth - .5) * 4;
+    const y = (e.clientY / window.innerHeight - .5) * 3;
+
+    document.querySelector(".shadow").style.transform =
+        `translate(${x}px, ${y}px) scaleX(.65)`;
+});
+
+document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+        document.title = "come back";
+    } else {
+        document.title = "you are still here";
+    }
+});
+</script>
+
 </body>
 </html>

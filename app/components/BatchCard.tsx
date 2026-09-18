@@ -1,386 +1,470 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { getFileGlyph, formatBytes } from "@/lib/fileDisplay";
 import {
-  FolderOpen,
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useMemo,
+  forwardRef,
+  useImperativeHandle,
+} from "react";
+import {
+  FolderPlus,
+  Plus,
   AlertTriangle,
-  Trash2,
-  Check,
-  Copy,
-  Archive,
-  AlertCircle,
-  Download,
+  Loader2,
+  Upload,
+  FileText,
+  Clipboard,
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
-import type { Batch } from "@/lib/batches";
-import { getPublicUrl } from "@/lib/batches";
-import { isImage, getFileGlyph, formatBytes } from "@/lib/fileDisplay";
-import { downloadBatchAsZip } from "@/lib/zipDownload";
+import {
+  uploadBatch,
+  getOversizedFiles,
+  exceedsSoftWarning,
+} from "@/lib/upload";
 
-interface BatchCardProps {
-  batch: Batch;
-  isOwner?: boolean;
-  onDeleteComplete?: () => void;
+export interface UploadFormRef {
+  addFiles: (files: FileList | File[]) => void;
+  openPicker: () => void;
 }
 
-const OWNED_SLUGS_KEY = "looming_owned_slugs";
+interface UploadFormProps {
+  onUploadComplete: (slug: string) => void;
+}
 
-// Reusable Win95 border styling tokens =3
+interface StagedFile {
+  id: string;
+  file: File;
+}
+
+const MIN_SLUG_LENGTH = 5;
+
+function makeId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function getFilesFromClipboard(e: ClipboardEvent): Promise<File[]> {
+  const files: File[] = [];
+  const items = e.clipboardData?.items;
+  if (!items) return files;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.kind === "file") {
+      const blob = item.getAsFile();
+      if (!blob) continue;
+
+      const isImg = blob.type.startsWith("image/");
+      const needsName =
+        !blob.name || blob.name === "image.png" || blob.name === "blob";
+
+      if (isImg && needsName) {
+        const ext = blob.type.split("/")[1] || "png";
+        const renamedFile = new File(
+          [blob],
+          `pasted-image-${Date.now()}.${ext}`,
+          {
+            type: blob.type,
+            lastModified: Date.now(),
+          }
+        );
+        files.push(renamedFile);
+      } else {
+        files.push(blob);
+      }
+    }
+  }
+
+  return files;
+}
+
 const inset =
   "border-2 border-t-[#808080] border-l-[#808080] border-r-[#ffffff] border-b-[#ffffff]";
 const raised =
   "border-2 border-t-[#ffffff] border-l-[#ffffff] border-r-[#808080] border-b-[#808080] active:border-t-[#808080] active:border-l-[#808080] active:border-r-[#ffffff] active:border-b-[#ffffff]";
 
-function readOwnedSlugs(): string[] {
-  if (typeof window === "undefined") return [];
-  const raw = localStorage.getItem(OWNED_SLUGS_KEY);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    console.warn("⚠️ owned_slugs in localStorage was corrupted, resetting >w<");
-    localStorage.removeItem(OWNED_SLUGS_KEY);
-    return [];
-  }
-}
+const UploadForm = forwardRef<UploadFormRef, UploadFormProps>(
+  ({ onUploadComplete }, ref) => {
+    const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
+    const [expiryDays, setExpiryDays] = useState(1);
+    const [customSlug, setCustomSlug] = useState("");
+    const [isDragging, setIsDragging] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [snackbar, setSnackbar] = useState<string | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const snackbarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+      null
+    );
 
-function formatRemainingTime(ms: number): { label: string; urgency: number } {
-  if (ms <= 0) return { label: "Expired ⏳", urgency: 1 };
+    const addFiles = useCallback((newFiles: FileList | File[]) => {
+      const wrapped = Array.from(newFiles).map((file) => ({
+        id: makeId(),
+        file,
+      }));
+      setStagedFiles((prev) => [...prev, ...wrapped]);
+      setError(null);
+    }, []);
 
-  const totalSeconds = Math.floor(ms / 1000);
-  const totalMinutes = Math.floor(totalSeconds / 60);
-  const totalHours = Math.floor(totalMinutes / 60);
-  const totalDays = Math.floor(totalHours / 24);
+    const openFilePicker = useCallback(() => {
+      fileInputRef.current?.click();
+    }, []);
 
-  const maxWindow = 24 * 60 * 60 * 1000;
-  const urgency = Math.min(1, Math.max(0, 1 - ms / maxWindow));
+    // Expose methods to parent ref (page.tsx) >w<
+    useImperativeHandle(
+      ref,
+      () => ({
+        addFiles,
+        openPicker: openFilePicker,
+      }),
+      [addFiles, openFilePicker]
+    );
 
-  if (totalMinutes < 5) {
-    const s = totalSeconds % 60;
-    return {
-      label: `${totalMinutes}m ${s.toString().padStart(2, "0")}s`,
-      urgency,
-    };
-  }
+    const removeFile = useCallback((id: string) => {
+      setStagedFiles((prev) => prev.filter((sf) => sf.id !== id));
+    }, []);
 
-  if (totalHours < 1) {
-    return {
-      label: `${totalMinutes}m left`,
-      urgency,
-    };
-  }
+    const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
 
-  if (totalDays < 1) {
-    const m = totalMinutes % 60;
-    return {
-      label: `${totalHours}h ${m.toString().padStart(2, "0")}m`,
-      urgency,
-    };
-  }
+    useEffect(() => {
+      const currentIds = new Set(stagedFiles.map((sf) => sf.id));
 
-  const h = totalHours % 24;
-  return {
-    label: `${totalDays}d ${h}h left`,
-    urgency: 0,
-  };
-}
+      setImageUrls((prev) => {
+        const next = { ...prev };
+        let changed = false;
 
-export default function BatchCard({
-  batch,
-  isOwner = false,
-  onDeleteComplete,
-}: BatchCardProps) {
-  const [copied, setCopied] = useState(false);
-  const [zipping, setZipping] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [timeLeftStr, setTimeLeftStr] = useState({
-    label: "Calculating...",
-    urgency: 0,
-  });
+        for (const sf of stagedFiles) {
+          if (!next[sf.id] && sf.file.type.startsWith("image/")) {
+            next[sf.id] = URL.createObjectURL(sf.file);
+            changed = true;
+          }
+        }
 
-  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+        for (const id of Object.keys(next)) {
+          if (!currentIds.has(id)) {
+            URL.revokeObjectURL(next[id]);
+            delete next[id];
+            changed = true;
+          }
+        }
 
-  useEffect(() => {
-    const targetTime = new Date(batch.expires_at).getTime();
+        return changed ? next : prev;
+      });
+    }, [stagedFiles]);
 
-    const updateTimer = () => {
-      const now = Date.now();
-      const difference = targetTime - now;
-      setTimeLeftStr(formatRemainingTime(difference));
-    };
+    useEffect(() => {
+      return () => {
+        Object.values(imageUrls).forEach((url) => URL.revokeObjectURL(url));
+      };
+    }, []);
 
-    updateTimer();
-    const intervalId = setInterval(updateTimer, 1000);
+    useEffect(() => {
+      return () => {
+        if (snackbarTimerRef.current) clearTimeout(snackbarTimerRef.current);
+      };
+    }, []);
 
-    return () => clearInterval(intervalId);
-  }, [batch.expires_at]);
-
-  useEffect(() => {
-    return () => {
-      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
-      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-    };
-  }, []);
-
-  const { label, urgency } = timeLeftStr;
-  const isExpired = label.startsWith("Expired");
-  const isUrgent = urgency > 0.7;
-
-  const shareUrl =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/${batch.slug}`
-      : `/${batch.slug}`;
-
-  function flashError(message: string) {
-    setActionError(message);
-    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-    errorTimerRef.current = setTimeout(() => setActionError(null), 4000);
-  }
-
-  async function handleCopyLink() {
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(shareUrl);
-      } else {
-        const textarea = document.createElement("textarea");
-        textarea.value = shareUrl;
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
-      }
-      setCopied(true);
-      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
-      copiedTimerRef.current = setTimeout(() => setCopied(false), 1800);
-    } catch (err) {
-      console.error("Clipboard copy failed:", err);
-      flashError("couldn't copy — copy the link manually");
+    function showSnackbar(message: string) {
+      setSnackbar(message);
+      if (snackbarTimerRef.current) clearTimeout(snackbarTimerRef.current);
+      snackbarTimerRef.current = setTimeout(() => setSnackbar(null), 4000);
     }
-  }
 
-  async function handleZipDownload() {
-    setZipping(true);
-    try {
-      await downloadBatchAsZip(batch.slug, batch.files);
-    } catch (err) {
-      console.error("Zip download failed:", err);
-      flashError("zip download failed, try again");
-    } finally {
-      setZipping(false);
-    }
-  }
+    // Handle Clipboard Paste Event
+    useEffect(() => {
+      async function handlePaste(e: ClipboardEvent) {
+        const active = document.activeElement;
+        if (
+          active &&
+          (active.tagName === "INPUT" ||
+            active.tagName === "TEXTAREA" ||
+            (active as HTMLElement).isContentEditable)
+        ) {
+          return;
+        }
 
-  async function handleDeleteThread() {
-    if (!confirm("Are you sure you want to sever this thread permanently? (´W`)"))
-      return;
-    setDeleting(true);
-    try {
-      // 1. Collect all storage paths for this batch =3!
-      const storagePaths = batch.files.map((file) => file.storage_path);
-
-      // 2. Delete files from Supabase Storage bucket first (replace 'files' with your actual bucket name)
-      if (storagePaths.length > 0) {
-        const { error: storageError } = await supabase.storage
-          .from("looming-files") // 👈 Replace with your actual bucket name if different!
-          .remove(storagePaths);
-
-        if (storageError) {
-          console.error("Storage deletion error:", storageError);
-          flashError("thread deleted, but some files may remain in storage");
+        const pastedFiles = await getFilesFromClipboard(e);
+        if (pastedFiles.length > 0) {
+          e.preventDefault();
+          addFiles(pastedFiles);
+          showSnackbar(`Pasted ${pastedFiles.length} file(s)! =3`);
         }
       }
 
-      // 3. Delete the batch row from the database >w<
-      const { error: dbError } = await supabase
-        .from("batches")
-        .delete()
-        .eq("slug", batch.slug);
+      window.addEventListener("paste", handlePaste);
+      return () => {
+        window.removeEventListener("paste", handlePaste);
+      };
+    }, [addFiles]);
 
-      if (dbError) throw dbError;
-
-      // 4. Clear local storage reference
-      const currentSlugs = readOwnedSlugs();
-      localStorage.setItem(
-        OWNED_SLUGS_KEY,
-        JSON.stringify(currentSlugs.filter((s) => s !== batch.slug)),
-      );
-
-      if (onDeleteComplete) onDeleteComplete();
-    } catch (err) {
-      flashError("failed to delete thread safely");
-      console.error(err);
-    } finally {
-      setDeleting(false);
+    function handleDrop(e: React.DragEvent) {
+      e.preventDefault();
+      setIsDragging(false);
+      if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
     }
-  }
 
-  return (
-    <div
-      className={`bg-[#c0c0c0] ${raised} w-full font-mono text-xs text-black`}
-      role="region"
-      aria-label={`Batch ${batch.slug}`}
-    >
-      {/* Title bar strip */}
-      <div
-        className="px-2 py-1 flex items-center justify-between text-white font-bold select-none"
-        style={{
-          background: isExpired
-            ? "#808080"
-            : isUrgent
-              ? "linear-gradient(to right, #a02c2c, #d9534f)"
-              : "linear-gradient(to right, #000080, #1084d0)",
-        }}
-      >
-        <span className="truncate flex items-center gap-1.5">
-          <FolderOpen className="w-3.5 h-3.5 inline-block shrink-0" />
-          /{batch.slug}
-        </span>
-        <span className="text-[10px] whitespace-nowrap ml-2 flex items-center gap-1">
-          {isExpired ? (
-            <>
-              <AlertTriangle className="w-3 h-3 inline-block shrink-0" />
-              expired
-            </>
-          ) : (
-            label
-          )}
-        </span>
-      </div>
+    function handleDropzoneKeyDown(e: React.KeyboardEvent) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openFilePicker();
+      }
+    }
 
-      <div className="p-3">
-        {/* Action buttons */}
-        <div className="flex items-center gap-2 w-full justify-start overflow-x-auto no-scrollbar mb-3">
-          {isOwner && (
-            <button
-              onClick={handleDeleteThread}
-              disabled={deleting}
-              className={`px-2 py-1 ${raised} bg-[#c0c0c0] text-[#800000] font-bold disabled:opacity-40 whitespace-nowrap flex items-center gap-1.5`}
-            >
-              <Trash2 className="w-3.5 h-3.5 shrink-0" />
-              {deleting ? "shredding…" : "delete"}
-            </button>
-          )}
-          <button
-            onClick={handleCopyLink}
-            disabled={isExpired}
-            className={`px-2 py-1 ${raised} bg-[#c0c0c0] text-black font-bold disabled:opacity-40 whitespace-nowrap flex items-center gap-1.5`}
+    const slugError = useMemo(() => {
+      const trimmed = customSlug.trim();
+      if (trimmed.length === 0) return null;
+      if (trimmed.length < MIN_SLUG_LENGTH) {
+        return `slug needs at least ${MIN_SLUG_LENGTH} letters`;
+      }
+      if (!/^[a-zA-Z0-9-]+$/.test(trimmed)) {
+        return "slug can only use letters, numbers, and dashes";
+      }
+      return null;
+    }, [customSlug]);
+
+    async function handleSubmit() {
+      setError(null);
+
+      if (stagedFiles.length === 0) {
+        setError("Add at least one file first.");
+        return;
+      }
+
+      if (slugError) {
+        setError(slugError);
+        return;
+      }
+
+      const rawFiles = stagedFiles.map((sf) => sf.file);
+
+      const oversized = getOversizedFiles(rawFiles);
+      if (oversized.length > 0) {
+        setError(`Too big (50MB max): ${oversized.join(", ")}`);
+        return;
+      }
+
+      if (exceedsSoftWarning(rawFiles)) {
+        showSnackbar(
+          "Heads up — this batch is over 200MB total. Uploading anyway…",
+        );
+      }
+
+      setIsUploading(true);
+      try {
+        const result = await uploadBatch(
+          rawFiles,
+          expiryDays,
+          customSlug.trim() || null,
+        );
+        setStagedFiles([]);
+        setCustomSlug("");
+        onUploadComplete(result.slug);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Upload failed, try again.",
+        );
+      } finally {
+        setIsUploading(false);
+      }
+    }
+
+    return (
+      <div className="relative font-mono text-xs text-black">
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => e.target.files && addFiles(e.target.files)}
+        />
+
+        {stagedFiles.length === 0 ? (
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label="Drop files here, paste from clipboard, or press enter to browse"
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={handleDrop}
+            onClick={openFilePicker}
+            onKeyDown={handleDropzoneKeyDown}
+            className={`cursor-pointer ${inset} p-8 text-center select-none focus:outline focus:outline-1 focus:outline-dotted focus:outline-black`}
+            style={{
+              background: isDragging ? "#000080" : "#ffffff",
+              color: isDragging ? "#ffffff" : "#000000",
+              touchAction: "manipulation",
+            }}
           >
-            {copied ? (
-              <Check className="w-3.5 h-3.5 shrink-0 text-green-700" />
-            ) : (
-              <Copy className="w-3.5 h-3.5 shrink-0" />
-            )}
-            {copied ? "copied" : "copy link"}
-          </button>
-          {batch.files.length > 1 && (
-            <button
-              onClick={handleZipDownload}
-              disabled={zipping || isExpired}
-              className={`px-2 py-1 ${raised} bg-[#c0c0c0] text-[#000080] font-bold disabled:opacity-40 whitespace-nowrap flex items-center gap-1.5`}
-            >
-              <Archive className="w-3.5 h-3.5 shrink-0" />
-              {zipping ? "zipping…" : "download all (.zip)"}
-            </button>
-          )}
-        </div>
+            <p className="font-bold flex items-center justify-center gap-1.5">
+              <FolderPlus className="w-4 h-4 inline-block text-[#FFA800] shrink-0"/>
+              Drop files here, paste (Ctrl+V), or click to browse
+            </p>
+            <p className="text-[10px] mt-1 text-[#404040]">
+              {isDragging ? "release to drop! =3" : "Up to 50MB per file"}
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2 w-full">
+            <div className="flex items-center justify-between border-b-2 border-dotted border-[#808080] pb-1 mb-1">
+              <h3 className="font-bold text-[#000080] uppercase tracking-wider">
+                Staged Files ({stagedFiles.length})
+              </h3>
+              <button
+                onClick={openFilePicker}
+                style={{ touchAction: "manipulation" }}
+                className={`${raised} bg-[#c0c0c0] px-2 py-0.5 text-black font-bold flex items-center gap-1`}
+              >
+                <Plus className="w-3.5 h-3.5 shrink-0 text-green-700"/> Add Files
+              </button>
+            </div>
 
-        {actionError && (
-          <p className="text-[#800000] font-bold mb-3 -mt-1 flex items-center gap-1">
-            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-            {actionError}
+            <div className="flex flex-col gap-2 sm:grid sm:grid-cols-2 md:grid-cols-3 justify-start items-stretch">
+              {stagedFiles.map(({ id, file }) => {
+                const isImg = file.type.startsWith("image/");
+                const localUrl = imageUrls[id];
+
+                return (
+                  <div
+                    key={id}
+                    className={`w-full sm:w-auto flex flex-col gap-2 p-2 bg-[#c0c0c0] ${raised} justify-between`}
+                  >
+                    <div>
+                      <div
+                        className={`aspect-square w-full ${inset} bg-white flex items-center justify-center overflow-hidden mb-2 select-none`}
+                      >
+                        {isImg && localUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={localUrl}
+                            alt={file.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <FileText className="w-8 h-8 text-[#000080]"/>
+                        )}
+                      </div>
+
+                      <div className="min-w-0 px-0.5">
+                        <p
+                          className="font-medium break-all line-clamp-1 text-black"
+                          title={file.name}
+                        >
+                          {file.name}
+                        </p>
+                        <p className="text-[10px] text-[#404040] mt-0.5">
+                          {formatBytes?.(file.size) ||
+                            `${(file.size / 1024).toFixed(1)} KB`}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => removeFile(id)}
+                      style={{ touchAction: "manipulation" }}
+                      className={`w-full text-center py-1 ${raised} bg-[#c0c0c0] text-[#800000] font-bold mt-1`}
+                    >
+                      remove
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {stagedFiles.length > 0 && (
+          <div className="mt-4 flex flex-col gap-3 border-t-2 border-dotted border-[#808080] pt-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full">
+              <div>
+                <label className="block font-bold text-[#000080] mb-1">
+                  expires in
+                </label>
+                <select
+                  value={expiryDays}
+                  onChange={(e) => setExpiryDays(Number(e.target.value))}
+                  style={{ touchAction: "manipulation" }}
+                  className={`w-full bg-white ${inset} text-black px-2 py-1.5 outline-none`}
+                >
+                  {[1, 2, 3, 4, 5].map((d) => (
+                    <option key={d} value={d}>
+                      {d} day{d > 1 ? "s" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block font-bold text-[#000080] mb-1">
+                  custom slug (optional)
+                </label>
+                <input
+                  type="text"
+                  value={customSlug}
+                  onChange={(e) => setCustomSlug(e.target.value)}
+                  placeholder="min 5 letters"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  autoComplete="off"
+                  style={{ touchAction: "manipulation" }}
+                  className={`w-full bg-white ${inset} text-black px-2 py-1.5 placeholder:text-[#808080] outline-none`}
+                />
+                {slugError && (
+                  <p className="text-[10px] text-[#800000] font-bold mt-1 flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-[#800000]"/>{" "}
+                    {slugError}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <button
+              onClick={handleSubmit}
+              disabled={isUploading || !!slugError}
+              style={{ touchAction: "manipulation" }}
+              className={`w-full sm:w-auto sm:self-end px-5 py-1.5 sm:py-1 ${raised} bg-[#c0c0c0] text-black font-bold disabled:opacity-50 flex items-center justify-center gap-1.5`}
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin"/>{" "}
+                  uploading…
+                </>
+              ) : (
+                <>
+                  <Upload className="w-3.5 h-3.5 shrink-0 text-[#000080]"/>{" "}
+                  upload thread
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <p className="mt-3 text-[#800000] font-bold flex items-center gap-1">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-[#800000]"/>{" "}
+            {error}
           </p>
         )}
 
-        {/* File grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 justify-start items-stretch">
-          {batch.files.map((file) => (
-            <FileTile key={file.id} file={file} disabled={isExpired} />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FileTile({
-  file,
-  disabled = false,
-}: {
-  file: Batch["files"][number];
-  disabled?: boolean;
-}) {
-  const url = getPublicUrl(file.storage_path);
-  const showImage = isImage(file.mime_type);
-
-  // Resolve icon using correct BatchFile property names =3!
-  const FileIcon = getFileGlyph(file.mime_type, file.filename);
-
-  async function handleDownload(e: React.MouseEvent) {
-    e.preventDefault();
-    if (disabled) return;
-    try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`fetch failed: ${response.status}`);
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = file.filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-    } catch (err) {
-      console.error("Download failed:", err);
-      window.open(url, "_blank");
-    }
-  }
-
-  return (
-    <div
-      className={`w-full flex flex-col gap-2 p-2 bg-[#c0c0c0] ${raised} justify-between`}
-    >
-      <div>
-        <div
-          className={`aspect-square w-full ${inset} bg-white flex items-center justify-center overflow-hidden mb-2 select-none`}
-        >
-          {showImage ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={url}
-              alt={file.filename}
-              className="w-full h-full object-cover"
-              loading="lazy"
-            />
-          ) : (
-            <FileIcon className="w-8 h-8 text-[#000080]" />
-          )}
-        </div>
-
-        <div className="min-w-0 px-0.5">
-          <p
-            className="font-medium break-all line-clamp-1 text-black"
-            title={file.filename}
+        {snackbar && (
+          <div
+            className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-[#c0c0c0] ${raised} text-black shadow-[3px_3px_0px_#000000] z-50`}
           >
-            {file.filename}
-          </p>
-          <p className="text-[10px] text-[#404040] mt-0.5">
-            {formatBytes(file.size)}
-          </p>
-        </div>
+            {snackbar}
+          </div>
+        )}
       </div>
+    );
+  }
+);
 
-      <button
-        onClick={handleDownload}
-        disabled={disabled}
-        className={`w-full text-center py-1 ${raised} bg-[#c0c0c0] text-black font-bold mt-1 disabled:opacity-40 flex items-center justify-center gap-1.5`}
-      >
-        <Download className="w-3.5 h-3.5 shrink-0" />
-        download
-      </button>
-    </div>
-  );
-}
+UploadForm.displayName = "UploadForm";
+
+export default UploadForm;
