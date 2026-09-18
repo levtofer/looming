@@ -9,6 +9,7 @@ import {
   Loader2,
   Upload,
   FileText,
+  Clipboard,
 } from "lucide-react";
 import {
   uploadBatch,
@@ -33,10 +34,44 @@ function makeId() {
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-// Reusable Win95 "pressed in" panel border
+async function getFilesFromClipboard(e: ClipboardEvent): Promise<File[]> {
+  const files: File[] = [];
+  const items = e.clipboardData?.items;
+  if (!items) return files;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.kind === "file") {
+      const blob = item.getAsFile();
+      if (!blob) continue;
+
+      // Ensure proper extension and name for pasted raw images
+      const isImg = blob.type.startsWith("image/");
+      const needsName =
+        !blob.name || blob.name === "image.png" || blob.name === "blob";
+
+      if (isImg && needsName) {
+        const ext = blob.type.split("/")[1] || "png";
+        const renamedFile = new File(
+          [blob],
+          `pasted-image-${Date.now()}.${ext}`,
+          {
+            type: blob.type,
+            lastModified: Date.now(),
+          }
+        );
+        files.push(renamedFile);
+      } else {
+        files.push(blob);
+      }
+    }
+  }
+
+  return files;
+}
+
 const inset =
   "border-2 border-t-[#808080] border-l-[#808080] border-r-[#ffffff] border-b-[#ffffff]";
-// Reusable Win95 "raised" button border
 const raised =
   "border-2 border-t-[#ffffff] border-l-[#ffffff] border-r-[#808080] border-b-[#808080] active:border-t-[#808080] active:border-l-[#808080] active:border-r-[#ffffff] active:border-b-[#ffffff]";
 
@@ -90,14 +125,12 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
 
       return changed ? next : prev;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stagedFiles]);
 
   useEffect(() => {
     return () => {
       Object.values(imageUrls).forEach((url) => URL.revokeObjectURL(url));
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -111,6 +144,33 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
     if (snackbarTimerRef.current) clearTimeout(snackbarTimerRef.current);
     snackbarTimerRef.current = setTimeout(() => setSnackbar(null), 4000);
   }
+
+  // Handle Clipboard Paste Event
+  useEffect(() => {
+    async function handlePaste(e: ClipboardEvent) {
+      const active = document.activeElement;
+      if (
+        active &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          (active as HTMLElement).isContentEditable)
+      ) {
+        return;
+      }
+
+      const pastedFiles = await getFilesFromClipboard(e);
+      if (pastedFiles.length > 0) {
+        e.preventDefault();
+        addFiles(pastedFiles);
+        showSnackbar(`Pasted ${pastedFiles.length} file(s)! =3`);
+      }
+    }
+
+    window.addEventListener("paste", handlePaste);
+    return () => {
+      window.removeEventListener("paste", handlePaste);
+    };
+  }, [addFiles]);
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
@@ -201,7 +261,7 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
         <div
           role="button"
           tabIndex={0}
-          aria-label="Drop files here, or press enter to browse"
+          aria-label="Drop files here, paste from clipboard, or press enter to browse"
           onDragOver={(e) => {
             e.preventDefault();
             setIsDragging(true);
@@ -218,7 +278,7 @@ export default function UploadForm({ onUploadComplete }: UploadFormProps) {
         >
           <p className="font-bold flex items-center justify-center gap-1.5">
             <FolderPlus className="w-4 h-4 inline-block text-[#FFA800] shrink-0" />
-            Drop files here, or click to browse
+            Drop files here, paste (Ctrl+V), or click to browse
           </p>
           <p className="text-[10px] mt-1 text-[#404040]">
             {isDragging ? "release to drop! =3" : "Up to 50MB per file"}

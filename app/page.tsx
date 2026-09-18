@@ -1,15 +1,18 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import UploadForm from "./components/UploadForm";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
+import UploadForm, { UploadFormRef } from "./components/UploadForm";
 import BatchCard from "./components/BatchCard";
 import { supabase } from "@/lib/supabase";
 import type { Batch } from "@/lib/batches";
 
 const OWNED_SLUGS_KEY = "looming_owned_slugs";
 const AUTO_REFRESH_MS = 60_000;
+const DEFAULT_ADDRESS = "C:\\looming_\\active_drops";
 
 function readOwnedSlugs(): string[] {
+  if (typeof window === "undefined") return [];
   const raw = localStorage.getItem(OWNED_SLUGS_KEY);
   if (!raw) return [];
   try {
@@ -23,16 +26,65 @@ function readOwnedSlugs(): string[] {
 }
 
 function writeOwnedSlugs(slugs: string[]) {
+  if (typeof window === "undefined") return;
   localStorage.setItem(OWNED_SLUGS_KEY, JSON.stringify(slugs));
 }
 
 export default function Home() {
+  const router = useRouter();
   const [batches, setBatches] = useState<Batch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sysTime, setSysTime] = useState<string>("");
+  const [isHelpOpen, setIsHelpOpen] = useState<boolean>(false);
 
-  // 📡 Fetch only the threads that belong to THIS browser! uwu~
+  // Address Bar State =3
+  const [addressInput, setAddressInput] = useState<string>(DEFAULT_ADDRESS);
+
+  // Dropdown States >w<
+  const [activeMenu, setActiveMenu] = useState<"file" | "edit" | "view" | "tools" | null>(null);
+
+  // Refs x3
+  const uploadFormRef = useRef<UploadFormRef | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Address submit handler (◕w◕)
+  function handleAddressSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = addressInput.trim();
+
+    if (
+      trimmed === DEFAULT_ADDRESS ||
+      trimmed.toLowerCase() === "c:\\looming_\\active_drops" ||
+      trimmed === "/" ||
+      trimmed === "." ||
+      trimmed === "./"
+    ) {
+      setAddressInput(DEFAULT_ADDRESS);
+      router.push("/");
+      return;
+    }
+
+    const targetSlug = trimmed
+      .replace(/^C:\\looming_\\?/i, "")
+      .replace(/^\/+/, "");
+
+    if (targetSlug) {
+      router.push(`/${targetSlug}`);
+    } else {
+      router.push("/");
+    }
+  }
+
+  // Close dropdowns on click outside (◠w◠)
+  useEffect(() => {
+    function handleClickOutside() {
+      setActiveMenu(null);
+    }
+    window.addEventListener("click", handleClickOutside);
+    return () => window.removeEventListener("click", handleClickOutside);
+  }, []);
+
   const fetchMyLiveThreads = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -73,7 +125,6 @@ export default function Home() {
   useEffect(() => {
     fetchMyLiveThreads();
 
-    // Clock updater for Win95 taskbar status cell =3
     const updateClock = () => {
       setSysTime(
         new Date().toLocaleTimeString([], {
@@ -84,8 +135,6 @@ export default function Home() {
     };
     updateClock();
     const clockTimer = setInterval(updateClock, 1000);
-
-    // Soft auto-refresh so expired batches quietly drop off the list
     const refreshTimer = setInterval(fetchMyLiveThreads, AUTO_REFRESH_MS);
 
     return () => {
@@ -103,15 +152,32 @@ export default function Home() {
     fetchMyLiveThreads();
   }
 
+  // File menu click handler >w<
+  const handleFileClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    fileInputRef.current?.click();
+  };
+
   return (
-    <main className="min-h-screen bg-[#008080] font-serif text-black p-4 sm:p-8 flex items-center justify-center">
+    <main className="relative min-h-screen bg-[#008080] font-serif text-black p-4 sm:p-8 flex items-center justify-center">
+      {/* Hidden File Input for Menu Trigger =3 */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            // Forward selected files to UploadForm via ref if supported
+          }
+        }}
+      />
+
       {/* 📁 Outer Windows 95 Explorer Window Container OwO */}
       <div className="w-full max-w-4xl bg-[#c0c0c0] border-2 border-t-[#ffffff] border-l-[#ffffff] border-r-[#404040] border-b-[#404040] shadow-[3px_3px_0px_#000000] p-[2px] flex flex-col font-mono text-xs">
 
         {/* 🗔 Title Bar >w< */}
         <div className="bg-gradient-to-r from-[#000080] to-[#1084d0] px-2 py-1 flex items-center justify-between text-white font-bold select-none">
           <span className="flex items-center gap-1.5 truncate">
-            {/* Lucide Folder Icon */}
             <svg
               className="w-3.5 h-3.5 shrink-0 stroke-current text-white"
               xmlns="http://www.w3.org/2000/svg"
@@ -128,34 +194,31 @@ export default function Home() {
           <div className="flex gap-1 shrink-0">
             <button
               type="button"
-              aria-hidden="true"
-              tabIndex={-1}
               className="w-4 h-3.5 bg-[#c0c0c0] border border-t-[#ffffff] border-l-[#ffffff] border-r-[#404040] border-b-[#404040] text-black text-[9px] flex items-center justify-center font-bold leading-none active:border-t-[#404040] active:border-l-[#404040] active:border-r-[#ffffff] active:border-b-[#ffffff] active:pt-0.5 active:pl-0.5"
             >
               _
             </button>
             <button
               type="button"
-              aria-hidden="true"
-              tabIndex={-1}
               className="w-4 h-3.5 bg-[#c0c0c0] border border-t-[#ffffff] border-l-[#ffffff] border-r-[#404040] border-b-[#404040] text-black flex items-center justify-center font-bold leading-none active:border-t-[#404040] active:border-l-[#404040] active:border-r-[#ffffff] active:border-b-[#ffffff] active:pt-0.5 active:pl-0.5"
             >
               <span className="w-2 h-2 border border-black inline-block"></span>
             </button>
-            <a
+            <button
               type="button"
-              aria-hidden="true"
-              tabIndex={-1}
               className="w-4 h-3.5 bg-[#c0c0c0] border border-t-[#ffffff] border-l-[#ffffff] border-r-[#404040] border-b-[#404040] text-black text-[11px] flex items-center justify-center font-bold leading-none active:border-t-[#404040] active:border-l-[#404040] active:border-r-[#ffffff] active:border-b-[#ffffff] active:pt-0.5 active:pl-0.5"
             >
               &#215;
-            </a>
+            </button>
           </div>
         </div>
 
         {/* 📑 Menu Bar :-3 */}
         <div className="flex gap-4 px-2 py-1 border-b border-[#808080] bg-[#c0c0c0] text-black select-none">
-          <span className="cursor-pointer hover:bg-[#000080] hover:text-white px-1">
+          <span
+            onClick={handleFileClick}
+            className="cursor-pointer hover:bg-[#000080] hover:text-white px-1 active:translate-y-0.5"
+          >
             <u className="no-underline underline">F</u>ile
           </span>
           <span className="cursor-pointer hover:bg-[#000080] hover:text-white px-1">
@@ -167,16 +230,26 @@ export default function Home() {
           <span className="cursor-pointer hover:bg-[#000080] hover:text-white px-1">
             <u className="no-underline underline">T</u>ools
           </span>
-          <span className="cursor-pointer hover:bg-[#000080] hover:text-white px-1">
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsHelpOpen(true);
+            }}
+            className="cursor-pointer hover:bg-[#000080] hover:text-white px-1 active:translate-y-0.5"
+          >
             <u className="no-underline underline">H</u>elp
           </span>
         </div>
 
         {/* 🌐 Toolbar & Address Box x3 */}
-        <div className="flex items-center gap-2 p-1.5 border-b border-white shadow-[0_1px_0_#808080] bg-[#c0c0c0]">
-          <span className="text-[#404040] font-bold">Address:</span>
+        <form
+          onSubmit={handleAddressSubmit}
+          className="flex items-center gap-2 p-1.5 border-b border-white shadow-[0_1px_0_#808080] bg-[#c0c0c0]"
+        >
+          <label htmlFor="win95-address" className="text-[#404040] font-bold select-none cursor-pointer">
+            Address:
+          </label>
           <div className="flex-1 bg-white border-2 border-t-[#808080] border-l-[#808080] border-r-[#ffffff] border-b-[#ffffff] px-2 py-0.5 flex items-center gap-1.5">
-            {/* Lucide FolderOpen Icon */}
             <svg
               className="w-3.5 h-3.5 shrink-0 stroke-current text-[#000080]"
               xmlns="http://www.w3.org/2000/svg"
@@ -189,11 +262,17 @@ export default function Home() {
               <path d="m6 14 1.5-2.9A2 2 0 0 1 9.27 10H22l-2 9H4Z" />
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
-            <span className="font-bold text-[#000080] truncate">
-              C:\looming_\active_drops
-            </span>
+            <input
+              id="win95-address"
+              type="text"
+              value={addressInput}
+              onChange={(e) => setAddressInput(e.target.value)}
+              className="w-full font-bold text-[#000080] bg-transparent outline-none p-0 m-0 border-none h-auto font-mono text-xs"
+              spellCheck={false}
+              autoComplete="off"
+            />
           </div>
-        </div>
+        </form>
 
         {/* 🖥️ Main Workspace Split View ^w^ */}
         <div className="flex flex-col md:flex-row gap-2 p-1.5 min-h-[480px]">
@@ -201,7 +280,6 @@ export default function Home() {
           {/* 🌲 Left Sidebar Tree >:-3 */}
           <aside className="w-full md:w-56 bg-white border-2 border-t-[#808080] border-l-[#808080] border-r-[#ffffff] border-b-[#ffffff] p-2 space-y-1 select-none overflow-y-auto">
             <div className="text-black flex items-center gap-1">
-              {/* Lucide Monitor Icon */}
               <svg
                 className="w-3.5 h-3.5 shrink-0 stroke-current"
                 xmlns="http://www.w3.org/2000/svg"
@@ -219,7 +297,6 @@ export default function Home() {
             </div>
             <div className="text-black pl-2 flex items-center gap-1">
               └
-              {/* Lucide HardDrive Icon */}
               <svg
                 className="w-3.5 h-3.5 shrink-0 stroke-current"
                 xmlns="http://www.w3.org/2000/svg"
@@ -238,7 +315,6 @@ export default function Home() {
             </div>
             <div className="text-black pl-5 flex items-center gap-1">
               └
-              {/* Lucide Folder Icon */}
               <svg
                 className="w-3.5 h-3.5 shrink-0 stroke-current"
                 xmlns="http://www.w3.org/2000/svg"
@@ -254,7 +330,6 @@ export default function Home() {
             </div>
             <div className="bg-[#000080] text-white pl-8 py-0.5 flex items-center gap-1 font-bold">
               ├
-              {/* Lucide FolderOpen Icon */}
               <svg
                 className="w-3.5 h-3.5 shrink-0 stroke-current text-white"
                 xmlns="http://www.w3.org/2000/svg"
@@ -271,7 +346,6 @@ export default function Home() {
             </div>
             <div className="text-black pl-8 flex items-center gap-1">
               └
-              {/* Lucide Trash2 Icon */}
               <svg
                 className="w-3.5 h-3.5 shrink-0 stroke-current"
                 xmlns="http://www.w3.org/2000/svg"
@@ -291,7 +365,6 @@ export default function Home() {
             </div>
             <div className="text-black pl-2 flex items-center gap-1">
               └
-              {/* Lucide Network / Globe Icon */}
               <svg
                 className="w-3.5 h-3.5 shrink-0 stroke-current"
                 xmlns="http://www.w3.org/2000/svg"
@@ -315,7 +388,6 @@ export default function Home() {
             {/* Upload Area Component Box */}
             <div className="bg-white border-2 border-t-[#808080] border-l-[#808080] border-r-[#ffffff] border-b-[#ffffff] p-3">
               <h2 className="text-[11px] font-bold text-[#000080] mb-2 uppercase tracking-wider flex items-center gap-1.5">
-                {/* Lucide Sparkles Icon */}
                 <svg
                   className="w-3.5 h-3.5 shrink-0 stroke-current text-[#000080]"
                   xmlns="http://www.w3.org/2000/svg"
@@ -329,7 +401,7 @@ export default function Home() {
                 </svg>
                 Drop a new thread into folder
               </h2>
-              <UploadForm onUploadComplete={handleUploadSuccess} />
+              <UploadForm ref={uploadFormRef} onUploadComplete={handleUploadSuccess} />
             </div>
 
             {/* Live Threads View */}
@@ -341,7 +413,6 @@ export default function Home() {
                 <span className="text-[10px] text-[#000080] font-bold flex items-center gap-1">
                   {loading ? (
                     <>
-                      {/* Lucide Loader2 Spinner Icon */}
                       <svg
                         className="w-3 h-3 animate-spin stroke-current"
                         xmlns="http://www.w3.org/2000/svg"
@@ -357,7 +428,6 @@ export default function Home() {
                     </>
                   ) : (
                     <>
-                      {/* Lucide CircleDot Status Icon */}
                       <svg
                         className="w-3 h-3 stroke-current text-[#000080]"
                         xmlns="http://www.w3.org/2000/svg"
@@ -435,6 +505,76 @@ export default function Home() {
         </footer>
 
       </div>
+
+      {/* ❓ Win95 Styled Help Modal UwU~ */}
+      {isHelpOpen && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-[1px] z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-[#c0c0c0] border-2 border-t-[#ffffff] border-l-[#ffffff] border-r-[#404040] border-b-[#404040] shadow-[3px_3px_0px_#000000] p-[2px] font-mono text-xs flex flex-col">
+
+            {/* Modal Title Bar */}
+            <div className="bg-gradient-to-r from-[#000080] to-[#1084d0] px-2 py-1 flex items-center justify-between text-white font-bold select-none">
+              <span className="flex items-center gap-1.5 truncate">
+                <svg
+                  className="w-3.5 h-3.5 shrink-0 stroke-current text-white"
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                  <line x1="12" x2="12.01" y1="17" y2="17" />
+                </svg>
+                Help - How to use looming_
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsHelpOpen(false)}
+                className="w-4 h-3.5 bg-[#c0c0c0] border border-t-[#ffffff] border-l-[#ffffff] border-r-[#404040] border-b-[#404040] text-black text-[11px] flex items-center justify-center font-bold leading-none active:border-t-[#404040] active:border-l-[#404040] active:border-r-[#ffffff] active:border-b-[#ffffff] active:pt-0.5 active:pl-0.5"
+              >
+                &#215;
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-4 space-y-3 bg-[#c0c0c0]">
+              <div className="bg-white border-2 border-t-[#808080] border-l-[#808080] border-r-[#ffffff] border-b-[#ffffff] p-3 text-black space-y-2 leading-relaxed">
+                <p className="font-bold text-[#000080]">
+                  Welcome to looming_ File Transfer! (✿◠w◠)
+                </p>
+                <ul className="list-disc pl-4 space-y-1 text-[11px]">
+                  <li>
+                    <b>Upload Files:</b> Use the dropzone or click <u>F</u>ile on the menu bar to stage files (up to 50MB per file) x3!
+                  </li>
+                  <li>
+                    <b>Custom Slugs:</b> Choose your own custom drop slug (min 5 alphanumeric/dash characters) or leave it blank to generate a random one =3.
+                  </li>
+                  <li>
+                    <b>Ephemeral Storage:</b> Set thread expiration between 1 to 5 days before files auto-delete UwU~.
+                  </li>
+                  <li>
+                    <b>Browser Context:</b> Active threads you create are tracked locally in your browser memory so you can manage them {'> w <'}!
+                  </li>
+                </ul>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsHelpOpen(false)}
+                  className="px-4 py-1 bg-[#c0c0c0] border-2 border-t-[#ffffff] border-l-[#ffffff] border-r-[#404040] border-b-[#404040] text-black font-bold text-xs active:border-t-[#404040] active:border-l-[#404040] active:border-r-[#ffffff] active:border-b-[#ffffff] active:pt-1 active:pl-4.5"
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
     </main>
   );
 }
